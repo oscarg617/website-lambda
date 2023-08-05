@@ -1,0 +1,9 @@
+flask
+pandas
+pymysql
+sshtunnel
+SQLAlchemy
+marshmallow
+python-dotenv
+psycopg2-binary
+Flask-SQLAlchemy
