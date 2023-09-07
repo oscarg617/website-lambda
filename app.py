@@ -1,10 +1,11 @@
 import os
 import json
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from flask import Flask, request
-from sqlalchemy import create_engine
 from sshtunnel import SSHTunnelForwarder
+from sqlalchemy import create_engine, text
 
 load_dotenv()
 
@@ -28,17 +29,78 @@ FROM log, player, team, game WHERE log.player_id = player.id AND log.game_id = g
 AND log.opponent_id = team.id AND player.full_name = '%s' AND log.season >= %s AND log.season <= %s 
 AND team.def_rtg >= %s AND team.def_rtg < %s ;"""
 
+
+SELECT_NAMES = """SELECT json_build_object('label', full_name, 'value', full_name) FROM player WHERE full_name ilike '%s\%';"""
+
 app = Flask(__name__)
 
 
-@app.route("/api/stats", methods=["GET"])
-def index():
-    if request.method == "GET":
-        data = request.get_json()
-        return handle_get(data)
+@app.route("/drtg", methods=["GET"])
+def drtg_handler():
+    return handle_drtg_get()
 
 
-def handle_get(data):
+def handle_drtg_get():
+    with SSHTunnelForwarder(
+        (ec2_dns),
+        ssh_username=ec2_user,
+        ssh_pkey=ec2_key,
+        remote_bind_address=(hostname, int(port)),
+        local_bind_address=("127.0.0.1", 5332),
+    ):
+        engine = create_engine(
+            f"postgresql+psycopg2://{user}:{password}@127.0.0.1:5332/{database_name}"
+        )
+        with engine.connect() as conn:
+            sql = f"SELECT MIN(def_rtg) FROM team;;"
+            result = conn.execute(text(sql))
+            for row in result:
+                min = float(row._asdict()["min"])
+
+            sql = f"SELECT MAX(def_rtg) FROM team;;"
+            result = conn.execute(text(sql))
+            for row in result:
+                max = float(row._asdict()["max"])
+
+        return {"statusCode": 200, "body": json.dumps(float(min))}
+
+
+@app.route("/names", methods=["POST"])
+def names_handler():
+    data = request.get_json()
+    return handle_names_post(data)
+
+
+def handle_names_post(data):
+    with SSHTunnelForwarder(
+        (ec2_dns),
+        ssh_username=ec2_user,
+        ssh_pkey=ec2_key,
+        remote_bind_address=(hostname, int(port)),
+        local_bind_address=("127.0.0.1", 5332),
+    ):
+        engine = create_engine(
+            f"postgresql+psycopg2://{user}:{password}@127.0.0.1:5332/{database_name}"
+        )
+        matches = []
+        with engine.connect() as conn:
+            name = data["search_string"]
+            sql = f"SELECT json_build_object('label', full_name, 'value', full_name) FROM player WHERE full_name ilike '{name}%';"
+            result = conn.execute(text(sql))
+            for row in result:
+                row = row._asdict()
+                matches.append(row["json_build_object"])
+
+    return matches
+
+
+@app.route("/stats", methods=["POST"])
+def stats_handler():
+    data = request.get_json()
+    return handle_stats_post(data)
+
+
+def handle_stats_post(data):
     name = data["name"]
     start_year = data["start_year"]
     end_year = data["end_year"]
